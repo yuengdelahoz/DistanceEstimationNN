@@ -9,7 +9,7 @@
 """
 """
 
-import sys, os, shutil, cv2, shutil, pickle
+import sys, os, shutil, cv2, shutil, pickle, traceback
 import numpy as np
 from collections import namedtuple
 import threading
@@ -20,8 +20,10 @@ def clear_folder(name):
 	if os.path.isdir(name):
 		try:
 			shutil.rmtree(name)
-		except:
-			pass
+		except Exception as e:
+			print('Folder could not be removed')
+			traceback.print_exc(file=sys.stdout)
+			input('Press enter to continue')
 
 def create_folder(name,clear_if_exists = True):
 	if clear_if_exists:
@@ -180,29 +182,37 @@ def cropImages():
 	print('Done cropping')
 
 def createSuperLabels():
-	create_folder('Dataset/Images/superlabel')
+	path = create_folder('images/superlabel/')
 	"""
-	There are 240x240 = 57600 pixels, so every superpixels (900 in total) has 57600/900=64 pixels (12x12)
+	There are 240x240 = 57600 pixels, so every superpixels (6 in total) has 57600/6=9600 pixels (12x12)
 	The resolution of each superlabel is 8x8 pixels
 	img[rows,cols]
 	img[0,0] = 0 (black)
 	img[0,0] = 255 (white)
 	"""
-	sh = 0 # horizontal shift
-	sv = 0 # vertical shift
-	for img in os.scandir('Dataset/Images/label'):
-		print('Creating superlabel for',img.path)
-		label = cv2.imread(img.path)
+	# color_list = [[0,0,255],[0,255,0],[255,0,0]]
+	# cnt = 0
+	for img in os.scandir('images/newlabel/'):
+		print('Creating superlabel for',img.path,end='\r')
+		sys.stdout.write("\033[K")
+		label = cv2.imread(img.path,cv2.IMREAD_GRAYSCALE)
+		# label = cv2.imread(img.path,cv2.IMREAD_COLOR)
 		superlabel = list() # empty list where to append Superpixels
-		for sv in range(0,240,8): # 12 superlabels in the height direction
-			for sh in range(0,240,8): # 12 superlabels in the width direction
-				rst = np.sum(label[sv:sv+8,sh:sh+8])# sum all the pixel values in the superlabels. img[rows,cols]
-				if rst > 0.95 * 255 * 144 : # if pixel values sum is more than 90% white.
-					superlabel.append(0) # mark superlabel as a ZERO
+		for idj,j in enumerate(range(0,240,120)): # 2 superlabels in the height direction
+			for idk,k in enumerate(range(0,240,80)): # 3 superlabels in the width direction
+				blob = label[j:j+120,k:k+80]# img[rows,cols]
+				if idj == 0:
+					avg = np.mean(blob)
 				else:
-					superlabel.append(1) # mark superlabel as a ONE
-		np.save('Dataset/Images/superlabel/'+img.name.replace('.png',''),np.array(superlabel))
-	print('Done')
+					mask = cv2.inRange(blob,0,250) # find indices where there are values between 0 and 250
+					blob = cv2.bitwise_and(blob,blob,mask=mask) # apply and operation with itself only considering the area specified by the mask
+					avg = np.sum(blob)/np.count_nonzero(blob) if np.count_nonzero(blob) > 0 else 255# get the average of non zero values
+				superlabel.append(avg)
+		# if cnt == 1000:
+			# break
+		# cnt +=1
+		np.save(path+img.name.replace('.png',''),np.array(superlabel))
+	print('\nDone')
 
 def paintImagesAll():
 	create_folder('dataset/painted_images')
@@ -237,23 +247,44 @@ def paintImage(image,superlabel):
 			pos +=1
 	return paintedImg
 
-def paintBatch(inputBatch,outputBatch,output_folder):
-	print('Painting images in the batch')
-	output_folder = 'Painted_Images/'+output_folder 
-	create_folder(output_folder)
-	for i,(img,suplbl) in enumerate(zip(inputBatch,outputBatch)):
-		pimg = paintImage(img,suplbl)
-		name = '{}/img_{:02}.png'.format(output_folder,i)
-		cv2.imwrite(name,pimg)
-
 class PainterThread (threading.Thread):
-	def __init__(self,inputBatch,outputBatch,output_folder='Training'):
+	def __init__(self,gt_input,gt_labels,net_output,output_folder='Training'):
 		threading.Thread.__init__(self)
-		self.inputBatch = inputBatch
-		self.outputBatch = outputBatch
+		self.input = gt_input
+		self.labels = gt_labels
+		self.output = net_output
 		self.folder = output_folder
 	def run(self):
-		paintBatch(self.inputBatch,self.outputBatch,self.folder)
+		path1 = create_folder('painted_images/'+self.folder+'/color_gt/')
+		path2 = create_folder('painted_images/'+self.folder+'/color_net/')
+		path3 = create_folder('painted_images/'+self.folder+'/color_gt_and_net/')
+		font = cv2.FONT_HERSHEY_SIMPLEX
+		for idx,(img,superlabel_gt,superlabel_net) in enumerate(zip(self.input,self.labels,self.output)):
+			img_name = 'image_{:.2f}.png'.format(idx)
+			i = 0
+			img = cv2.addWeighted(img,0.7,np.ones(img.shape,dtype = img.dtype)*255,0.3,0)
+			color_gt = img.copy()
+			cv2.putText(color_gt,'GT',(10,15), font, 0.4,(0,0,255),1,cv2.LINE_AA)
+			color_net = img.copy()
+			cv2.putText(color_net,'NET',(10,15), font, 0.4,(0,0,255),1,cv2.LINE_AA)
+			for sv in range(0,240,120): 
+				for sh in range(0,240,80):
+					# Ground Truth
+					d = '{:.2f}'.format(superlabel_gt[i]*10/255) # normalizing to 10 meters
+					cv2.rectangle(color_gt,(sh,sv),(sh+80,sv+120),(0,0,0),3)
+					cv2.putText(color_gt,d,(sh+30,sv+65), font, 0.25,(0,0,255),1,cv2.LINE_AA)
+
+					# Net results
+					d = '{:.2f}'.format(superlabel_net[i]*10/255) # normalizing to 10 meters
+					cv2.rectangle(color_net,(sh,sv),(sh+80,sv+120),(0,0,0),3)
+					cv2.putText(color_net,d,(sh+30,sv+65), font, 0.25,(0,0,255),1,cv2.LINE_AA)
+					i+=1
+			color_gt_net = np.concatenate((color_gt,color_net), axis=1)
+			cv2.imwrite(path1+img_name,color_gt)
+			cv2.imwrite(path2+img_name,color_net)
+			cv2.imwrite(path3+img_name,color_gt_net)
+		print('Done painting images in batch')
+
 
 def calculateMetrics(GroundTruthBatch, OutputBatch):
 	''' This method calculates Accuracy, Precision, and Recall
@@ -268,23 +299,8 @@ def calculateMetrics(GroundTruthBatch, OutputBatch):
 		Precision = TP/(TP+FP)
 		Recall = TP/(TP + FN)
 	'''
-	Accuracy = []
-	Precision = []
-	Recall = []
+	error = list()
 	for i in range(len(GroundTruthBatch)):
-		GT = 2*GroundTruthBatch[i]
-		NET = OutputBatch[i]
-		RST = GT - NET
-		TP,TN,FP,FN = 0,0,0,0
-		for v in RST:
-			if v == 0:
-				TN += 1
-			elif v == 1:
-				TP += 1
-			elif v == -1:
-				FP += 1
-			elif v == 2:
-				FN +=1
 		# print ('TP',TP,'TN',TN,'FP',FP,'FN',FN)
 		acc = (TP + TN)/(TP + TN + FP +FN)
 		if TP + FP !=0:
@@ -325,25 +341,59 @@ def generate_new_binary_dataset_for_objects_on_the_floor():
 	print('\nDone')
 
 def paint_all_images_with_text():
-	path = create_folder('Dataset/painted_images/')
+	path1 = create_folder('images/painted_images/color/')
+	path2 = create_folder('images/painted_images/label/')
+	path3 = create_folder('images/painted_images/orig_label/')
+	path4 = create_folder('images/painted_images/concatenate/')
 	font = cv2.FONT_HERSHEY_SIMPLEX
 	cnt = 0
-	for img in os.scandir('Dataset/Images/input'):
-		if img.name.endswith('png'):
-			color = cv2.imread(img.path)
-			label = np.load(img.path.replace('input','label').replace('png','npy'))
-			if np.array_equal(label,[1,0]):
-				cv2.putText(color,'YES',(100,100), font, 1,(0,0,255),2,cv2.LINE_AA)
-			elif np.array_equal(label,[0,1]):
-				cv2.putText(color,'NO',(100,100), font, 1,(255,0,0),2,cv2.LINE_AA)
-			cv2.imwrite(path+img.name,color)
-			print('painting',img.name,np.array_equal(label,[1,0]),end='\r')
+	for img in os.scandir('images/superlabel'):
+		if img.name.endswith('npy'):
+			if np.random.randint(0,1)>0:
+				continue
+			color = cv2.imread(img.path.replace('superlabel','color').replace('npy','png'))
+			color = cv2.addWeighted(color,0.7,np.ones(color.shape,dtype=color.dtype)*255,0.3,0)
+			label = cv2.imread(img.path.replace('superlabel','newlabel').replace('npy','png'))
+			orig_label = cv2.imread(img.path.replace('superlabel','label').replace('npy','png'))
+			superlabel = np.load(img.path)
+			i = 0
+			for sv in range(0,240,120): 
+				for sh in range(0,240,80):
+					c = np.random.randint(0,255)
+					cv2.rectangle(color,(sh,sv),(sh+80,sv+120),(0,0,0),3)
+
+					d = '{:.2f}'.format(superlabel[i]*10/255)
+					cv2.putText(color,d,(sh+30,sv+65), font, 0.25,(0,0,255),1,cv2.LINE_AA)
+					i+=1
+			color_label = np.concatenate((color,orig_label,label), axis=1)
+			cv2.imwrite(path1+img.name.replace('npy','png'),color)
+			cv2.imwrite(path2+img.name.replace('npy','png'),label)
+			cv2.imwrite(path3+img.name.replace('npy','png'),orig_label)
+			cv2.imwrite(path4+img.name.replace('npy','png'),color_label)
+			print('painting',img.name,superlabel,end='\r')
 			sys.stdout.write("\033[K")
 			if cnt == 100:
 				break
 			cnt +=1
-	print('Done')
+	print('\nDone')
+
+def generate_new_labels():
+	path1 = create_folder('images/newlabel/')
+	for img in os.scandir('images/label/'):
+		print('Creating new label for ',img.path,end='\r')
+		sys.stdout.write("\033[K")
+		color = cv2.imread(img.path.replace('label','color'))
+		label = cv2.imread(img.path,cv2.IMREAD_COLOR)
+		mask = cv2.cvtColor(label, cv2.COLOR_BGR2GRAY)
+		ret,mask = cv2.threshold(mask,200,255,cv2.THRESH_BINARY)
+		newlabel =  cv2.inpaint(label,mask,3,cv2.INPAINT_NS)
+
+		cv2.imwrite(path1+img.name,newlabel)
+	print('\nDone')
 
 if __name__ == '__main__':
-	paint_all_images_with_text()
+	# generate_new_labels()
+	createSuperLabels()
+	# paint_all_images_with_text()
+
 

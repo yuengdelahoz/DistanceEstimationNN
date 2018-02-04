@@ -15,7 +15,6 @@ class Layer():
 		self.output = tf.matmul(x,self.Weights) + self.Biases
 		# output.shape = [out_neurons]
 		if output:
-			# if the layer is an flag one apply activation function
 			self.output = self.actFunc(self.output,name='superpixels')
 			# output.shape = [out_neurons]
 		else:

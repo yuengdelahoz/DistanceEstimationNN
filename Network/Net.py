@@ -19,7 +19,7 @@ class Network:
 		self.name = None
 	def initialize(self,topology):
 		self.x = tf.placeholder(tf.float32, shape =[None,240,240,3],name='input_images')
-		self.y = tf.placeholder(tf.float32, shape = [None,900],name='labels')
+		self.y = tf.placeholder(tf.float32, shape = [None,6],name='labels')
 		self.keep_prob = tf.placeholder(tf.float32,name='keep_prob')
 		if topology == 'topology_01':
 			self.topology1()
@@ -94,7 +94,7 @@ class Network:
 		L4 = Layer().Convolutional([7,7,4,3],L3.output) # L4.output.shape = [?,30,500,3]
 		L5 = Layer().Convolutional([8,8,3,3],L4.output,k_pool=1) # L5.output.shape = [?,30,32,3]
 		L_drop = Layer().Dropout(L5.output,self.keep_prob)
-		L_out = Layer(act_func='sigmoid').Dense([30*30*3,900],tf.reshape(L_drop.output,[-1,30*30*3]),output=True)
+		L_out = Layer(act_func='sigmoid').Dense([30*30*3,6],tf.reshape(L_drop.output,[-1,30*30*3]),output=True)
 		self.output = L_out.output
 
 		# This is just for the README File
@@ -133,13 +133,16 @@ class Network:
 		self.layers.update({'L8':LFC.__dict__})
 		self.layers.update({'L_out':L_out.__dict__})
 
-	def train(self,iterations=100000,learning_rate = 1e-04):
+	def train(self,iterations=10000,learning_rate = 1e-03):
 		# reading dataset
 		if self.dataset is None:
 			self.dataset = DataHandler().build_datasets()
+
+		self.output = self.output*255
 		# loss function
-		# MSE = tf.reduce_mean(tf.square(self.y - self.output))
-		MSE = tf.reduce_mean(tf.square(self.y - self.output + tf.maximum((self.y - self.output) * 2, 0))) #Added higher weight penalties to the false negatives
+		MSE = tf.reduce_mean(tf.square(self.y - self.output))
+		error = tf.reduce_mean(tf.sqrt(tf.square((self.y*10/255) - self.output*10/255)))
+		# MSE = tf.reduce_mean(tf.square(self.y - self.output + tf.maximum((self.y - self.output) * 2, 0))) #Added higher weight penalties to the false negatives
 		# cross_entropy = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.output), reduction_indices=[1]))
 		loss = MSE
 		train_step = tf.train.AdamOptimizer(learning_rate).minimize(loss)
@@ -197,17 +200,14 @@ class Network:
 
 					save_path = saver.save(sess,'Models/'+self.name+'/model')
 					print("Model saved in file: %s" % save_path)
+
 					batch = self.dataset.validation.next_batch(50)
 					normBatch = np.array([(img-128)/128 for img in batch[0]])
 					labelBatch = [lbl for lbl in batch[1]]
 					results = np.round(sess.run(self.output,feed_dict={self.x:normBatch, self.y: labelBatch, self.keep_prob:1.0}))
-					print("Parcial Results")
-					acc,prec,rec = utils.calculateMetrics(labelBatch,results)
-					print('Accuracy',acc)
-					print('Precision',prec)
-					print('Recall',rec)
-					print("Parcial Results")
-					utils.PainterThread(batch[0],results).start()
+					err = sess.run(error,feed_dict={self.x:normBatch, self.y: labelBatch, self.keep_prob:1.0})
+					print('Validation error', err)
+					utils.PainterThread(batch[0],batch[1],results).start()
 					last_saved_time = time.time()
 
 			if remaining_iterations > 0 or not os.path.exists('Models/'+self.name+'/frozen/model.pb'):
