@@ -38,7 +38,7 @@ class Network:
 		# number of parameters =
 		L1 = Layer().Convolutional([5,5,3,3],self.x)# L1.output.shape = [?,120,120,3]
 		L_drop = Layer().Dropout(L1.output,self.keep_prob)
-		L_out = Layer(act_func = 'sigmoid').Dense([120*120*3,900],tf.reshape(L_drop.output,[-1,120*120*3]),output=True)
+		L_out = Layer(act_func = 'sigmoid').Dense([120*120*3,6],tf.reshape(L_drop.output,[-1,120*120*3]),output=True)
 		self.output = L_out.output
 
 		# This is just for the README File
@@ -55,7 +55,7 @@ class Network:
 		L3 = Layer(act_func = 'tanh').Convolutional([6,6,4,2],L2.output)# L3.output.shape = [?,60,125,7]
 		L4 = Layer(act_func = 'tanh').Convolutional([3,3,2,3],L3.output) # L4.output.shape = [?,30,63,3]
 		L_drop = Layer().Dropout(L4.output,self.keep_prob)
-		L_out = Layer(act_func = 'sigmoid').Dense([30*30*3,900],tf.reshape(L_drop.output,[-1,30*30*3]),output=True)
+		L_out = Layer(act_func = 'sigmoid').Dense([30*30*3,6],tf.reshape(L_drop.output,[-1,30*30*3]),output=True)
 		self.output = L_out.output
 
 		# This is just for the README File
@@ -74,7 +74,7 @@ class Network:
 		L2 = Layer().Convolutional([5,5,3,3],L1.output)# L2.output.shape = [?,60,60,3]
 		L3 = Layer().Convolutional([5,5,3,2],L2.output)# L3.output.shape = [?,30,30,2]
 		L_drop = Layer().Dropout(L3.output,self.keep_prob)
-		L_out = Layer(act_func='sigmoid').Dense([30*30*2,900],tf.reshape(L_drop.output,[-1,30*30*2]),output=True)
+		L_out = Layer(act_func='sigmoid').Dense([30*30*2,6],tf.reshape(L_drop.output,[-1,30*30*2]),output=True)
 		self.output = L_out.output
 
 		# This is just for the README File
@@ -118,7 +118,7 @@ class Network:
 		L6 = Layer().Convolutional([9,9,3,2],L5.output) # output.shape = [?,60,63,3]
 		L_drop = Layer().Dropout(L6.output,self.keep_prob)
 		LFC = Layer().Dense([60*60*2,3600],tf.reshape(L_drop.output,[-1,60*60*2]))
-		L_out = Layer(act_func='sigmoid').Dense([3600,900],LFC.output,output=True)
+		L_out = Layer(act_func='sigmoid').Dense([3600,6],LFC.output,output=True)
 		self.output = L_out.output
 
 		# This is just for the README File
@@ -141,7 +141,7 @@ class Network:
 		self.output = self.output*255
 		# loss function
 		MSE = tf.reduce_mean(tf.square(self.y - self.output))
-		error = tf.reduce_mean(tf.sqrt(tf.square((self.y*10/255) - self.output*10/255)))
+		error = tf.reduce_mean(tf.sqrt(tf.square(self.y*10/255 - self.output*10/255)))
 		# MSE = tf.reduce_mean(tf.square(self.y - self.output + tf.maximum((self.y - self.output) * 2, 0))) #Added higher weight penalties to the false negatives
 		# cross_entropy = tf.reduce_mean(-tf.reduce_sum(self.y * tf.log(self.output), reduction_indices=[1]))
 		loss = MSE
@@ -204,7 +204,7 @@ class Network:
 					batch = self.dataset.validation.next_batch(50)
 					normBatch = np.array([(img-128)/128 for img in batch[0]])
 					labelBatch = [lbl for lbl in batch[1]]
-					results = np.round(sess.run(self.output,feed_dict={self.x:normBatch, self.y: labelBatch, self.keep_prob:1.0}))
+					results = sess.run(self.output,feed_dict={self.x:normBatch, self.y: labelBatch, self.keep_prob:1.0})
 					err = sess.run(error,feed_dict={self.x:normBatch, self.y: labelBatch, self.keep_prob:1.0})
 					print('Validation error', err)
 					utils.PainterThread(batch[0],batch[1],results).start()
@@ -215,7 +215,10 @@ class Network:
 			else:
 				print('Nothing to be done')
 			print('total time -> {:.2f} secs'.format(time.time()-init_time))
-		tf.reset_default_graph()
+		try:
+			tf.reset_default_graph()
+		except:
+			pass
 
 	def evaluate(self,topology=None):
 		if topology is None:
@@ -228,7 +231,10 @@ class Network:
 			print("No model stored to be restored.")
 			return
 		print('Evaluating',topology)
-		tf.reset_default_graph()
+		try:
+			tf.reset_default_graph()
+		except:
+			pass
 		topology_path ='Models/{}/'.format(topology)
 		saver = tf.train.import_meta_graph(topology_path+'model.meta')
 		g = tf.get_default_graph()
@@ -245,18 +251,22 @@ class Network:
 				batch = self.dataset.testing.next_batch(50)
 				testImages = np.array([(img-128)/128 for img in batch[0]])
 				testLabels = [lbl for lbl in batch[1]]
-				results = np.round(sess.run(output,feed_dict={x:testImages,y: testLabels,keep_prob:1.0}))
-				met = utils.calculateMetrics(testLabels,results)
-				print ('iter',i,'Metrics',met,end='\r')
-				metrics.append(met)
-			metrics = np.mean(metrics,axis=0)
-			eval_metrics = '\nEvaluation metrics\nAccuracy: {0:.2f}, Precision: {1:.2f}, Recall {2:.2f}'.format(metrics[0],metrics[1],metrics[2])
+				results = sess.run(output,feed_dict={x:testImages,y: testLabels,keep_prob:1.0})
+				err = np.mean(np.sqrt(np.square(np.array(testLabels)*10/255 - results*10)))
+				print ('iter',i,'Error',err,end='\r')
+				metrics.append(err)
+			eval_error = np.mean(metrics)
+			eval_metrics = '\nEvaluation error {:.2f} meters'.format(eval_error)
 			print(eval_metrics)
 			with open(topology_path+'/README.txt','a') as f:
 				f.write(eval_metrics)
 			if results is not None:
-				utils.PainterThread(batch[0],results,output_folder='Testing').start()
-		tf.reset_default_graph()
+				utils.PainterThread(batch[0],batch[1],results,output_folder='Testing').start()
+
+		try:
+			tf.reset_default_graph()
+		except :
+			pass
 		shutil.copyfile('Dataset/dataset.pickle',topology_path+'dataset.pickle')
 
 	def freeze_graph_model(self, session = None, g = None , topology = None):
